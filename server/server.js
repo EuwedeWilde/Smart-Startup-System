@@ -135,9 +135,12 @@ function checkAndRemoveInactiveDevices() {
       deviceInfo.delete(deviceId);
       lastPingTime.delete(deviceId);
 
-      LogDeviceInfo.deleteOne({ did: deviceId })
-        .then(() => console.log(`Device ${deviceId} removed from database`))
-        .catch(err => console.error(`Error removing device ${deviceId} from database:`, err));
+      // LogDeviceInfo.deleteOne({ did: deviceId })
+      //   .then(() => console.log(`Device ${deviceId} removed from database`))
+      //   .catch(err => console.error(`Error removing device ${deviceId} from database:`, err));
+      LogDeviceInfo.updateOne({ did: deviceId }, { $set: { connected: false } })
+      .then(() => console.log(`Device ${deviceId} removed from database`))
+      .catch(err => console.error(`Error removing device ${deviceId} from database:`, err));
     }
   }
   updateDeviceList();
@@ -150,7 +153,9 @@ function handleInfoTopic(parsedMessage) {
       mac: parsedMessage.mac,
       dname: parsedMessage.dname,
       ip: parsedMessage.ip,
-      sockets: parsedMessage.sockets
+      sockets: parsedMessage.sockets,
+      lastConnection : new Date().getTime(),
+      connected: parsedMessage.connected  
     });
 
     logEntry.save()
