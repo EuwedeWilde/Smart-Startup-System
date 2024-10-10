@@ -1,7 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define DEVICE_ID 2
+#define DEVICE_ID 1
 #define MQTT_TOPIC "S3"  
 #define MQTT_SERVER "inmat.nl"  
 
@@ -10,7 +10,7 @@
 
 #define WIFI_INTERVAL 1000
 
-#define SERVER_ID 0
+#define SERVER_NAME "server"
 
 #define DEVICE_NAME "CTRLR2"
 

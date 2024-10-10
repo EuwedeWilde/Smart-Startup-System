@@ -1,15 +1,27 @@
 import serial
-import json
 import subprocess
+import re
+from pymongo import MongoClient
+import os
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONTROLLER_DIR = os.path.dirname(SCRIPT_DIR)
+PROJECT_ROOT = os.path.dirname(CONTROLLER_DIR)
 
 SERIAL_PORT = 'COM7'  
-SKETCH_PATH = 'controller/sketches/dev_esp32/dev_esp32.ino'
+SKETCH_PATH = os.path.join(PROJECT_ROOT, 'controller', 'sketches', 'dev_esp32', 'dev_esp32.ino')
+CONFIG_PATH = os.path.join(PROJECT_ROOT, 'controller', 'sketches', 'dev_esp32', 'config.h')
 BOARD = 'esp32:esp32:esp32'
 UPLOAD_PORT = 'COM7'
 
+# MongoDB connection settings
+MONGODB_URI = 'mongodb://127.0.0.1:27017/local'
+DB_NAME = 'local'
+COLLECTION_NAME = 'device_info'
+
 def get_mac_address():
     print("Waiting for MAC address...")
-    ser = serial.Serial(SERIAL_PORT, 115200, timeout=30)  # Increased timeout
+    ser = serial.Serial(SERIAL_PORT, 115200, timeout=30)
     try:
         while True:
             line = ser.readline().decode('utf-8').strip()
@@ -22,37 +34,48 @@ def get_mac_address():
         ser.close()
     return None
 
-def load_mac_database(filepath='mac_ids.json'):
-  try:
-    with open(filepath, 'r') as file:
-      return json.load(file)
-  except FileNotFoundError:
-    return {}
+def get_mongodb_connection():
+    client = MongoClient(MONGODB_URI)
+    db = client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+    return collection
 
-def save_mac_database(data, filepath='mac_ids.json'):
-  with open(filepath, 'w') as file:
-    json.dump(data, file, indent=2)
+def get_device_id(mac):
+    collection = get_mongodb_connection()
+    device = collection.find_one({'dMac': mac})
+    return device['did'] if device else None
 
-def assign_device_id(mac, mac_db):
-  if mac in mac_db:
-    return None
-  else:
-    new_id = len(mac_db) + 1
-    mac_db[mac] = new_id
+def assign_device_id(mac):
+    collection = get_mongodb_connection()
+    highest_id_doc = collection.find_one(sort=[('did', -1)])
+    new_id = 1 if not highest_id_doc else highest_id_doc.get('did', 0) + 1
+    collection.insert_one({'dMac': mac, 'did': new_id})
     return new_id
 
-def upload_sketch():
-  compile_cmd = f'arduino-cli compile --fqbn {BOARD} {SKETCH_PATH}'
-  upload_cmd = f'arduino-cli upload -p {UPLOAD_PORT} --fqbn {BOARD} {SKETCH_PATH}'
+def update_device_id(new_id):
+    print(f"Attempting to open file: {CONFIG_PATH}")
+    with open(CONFIG_PATH, 'r') as file:
+        content = file.read()
+    
+    updated_content = re.sub(r'#define DEVICE_ID \d+', f'#define DEVICE_ID {new_id}', content)
+    
+    with open(CONFIG_PATH, 'w') as file:
+        file.write(updated_content)
+    
+    print(f"Updated DEVICE_ID to {new_id} in {CONFIG_PATH}")
 
-  try:
-    print("Compiling the sketch...")
-    subprocess.run(compile_cmd, shell=True, check=True)
-    print("Uploading the sketch...")
-    subprocess.run(upload_cmd, shell=True, check=True)
-    print("Upload successful!")
-  except subprocess.CalledProcessError as e:
-    print(f"An error occurred during the process: {e}")
+def upload_sketch():
+    compile_cmd = f'arduino-cli compile --fqbn {BOARD} {SKETCH_PATH}'
+    upload_cmd = f'arduino-cli upload -p {UPLOAD_PORT} --fqbn {BOARD} {SKETCH_PATH}'
+
+    try:
+        print("Compiling the sketch...")
+        subprocess.run(compile_cmd, shell=True, check=True)
+        print("Uploading the sketch...")
+        subprocess.run(upload_cmd, shell=True, check=True)
+        print("Upload successful!")
+    except subprocess.CalledProcessError as e:
+        print(f"An error occurred during the process: {e}")
 
 def main():
     input("Press Enter to get device MAC...")
@@ -66,20 +89,19 @@ def main():
     
     input("Restart device in upload mode and press Enter to continue...")
 
-    mac_db = load_mac_database()
+    device_id = get_device_id(mac)
 
-    if mac in mac_db:
-        print(f"Device with MAC {mac} already has ID {mac_db[mac]}")
+    if device_id:
+        print(f"Device with MAC {mac} already has ID {device_id}")
     else:
-        new_id = assign_device_id(mac, mac_db)
-        if new_id:
-            print(f"New device ID {new_id} assigned to MAC {mac}")
-            save_mac_database(mac_db)
-            
-            input("Press Enter to start uploading the sketch...")
-            upload_sketch()
-        else:
-            print(f"Device with MAC {mac} already registered")
+        device_id = assign_device_id(mac)
+        print(f"New device ID {device_id} assigned to MAC {mac}")
+
+    # Always update the DEVICE_ID in config.h
+    update_device_id(device_id)
+    
+    input("Press Enter to start uploading the sketch...")
+    upload_sketch()
 
     input("Press Enter to exit...")
 

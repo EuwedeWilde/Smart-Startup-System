@@ -6,7 +6,7 @@
 
 #define TOPIC_LENGTH 32
 #define CREDENTIAL_LENGTH 32
-#define MESSAGE_LENGTH 1024
+#define MESSAGE_LENGTH 2048
 
 #define EEPROM_CFG_DEFINED 8
 #define EEPROM_CONFIG 10  
@@ -17,355 +17,296 @@
 #define spl Serial.println
 #define spf Serial.printf
 
-char _mainTopic[TOPIC_LENGTH];
-char _configTopic[TOPIC_LENGTH];
-char _infoTopic[TOPIC_LENGTH];
-char _pingTopic[TOPIC_LENGTH];
-char _controlTopic[TOPIC_LENGTH];
+#define MAIN_TOPIC "S3"
 
-char _subMessage[MESSAGE_LENGTH];
-char _currentTopic[TOPIC_LENGTH];
+#define SERVER_NAME "server"
 
-unsigned long previousMillis = 0;
-
-struct Outlet {
+struct Socket {
   char oName[CREDENTIAL_LENGTH];
   bool oState;
   char oGroup[CREDENTIAL_LENGTH];
 };
 
 struct Config {
-  char project[CREDENTIAL_LENGTH];
-  int port = 1883;
-  int id = DEVICE_ID;
-  char macAdr[CREDENTIAL_LENGTH];
-  char ipAdr[CREDENTIAL_LENGTH];
+  char mac[13];
+  int id;
   char name[CREDENTIAL_LENGTH];
-  char mqtt_server[CREDENTIAL_LENGTH];
-  char dGroup[CREDENTIAL_LENGTH];
-  int dSockets = MAX_SOCKETS;
-  Outlet outlets[MAX_SOCKETS];
+  char ipAdr[16];
+  char project[CREDENTIAL_LENGTH];
+  int dNumSockets;
+  Socket sockets[MAX_SOCKETS];
 };
 
 Config _cfg;
+char DEVICE_TOPIC[TOPIC_LENGTH];
 
-NetworkClient espClient;
-MqttClient mqttClient(espClient);
+WiFiClient wifiClient;
+MqttClient mqttClient(wifiClient);
 
-StaticJsonBuffer<MESSAGE_LENGTH> jsonBuffer;
+char _incomingMessage[MESSAGE_LENGTH];
+char _pubBuf[MESSAGE_LENGTH];
+StaticJsonBuffer<MESSAGE_LENGTH> _jsonPubBuffer;  
+
+bool isConnected = false;
 
 void setup() {
   Serial.begin(115200);
-  spl("Hello World!");
-  strcpy(_cfg.project, MQTT_TOPIC);
-  strcpy(_cfg.mqtt_server, MQTT_SERVER);
-  strcpy(_cfg.name, DEVICE_NAME);
-  initEEPROM();
+  EEPROM.begin(EEPROM_SIZE);
+  
   WiFi.mode(WIFI_STA);
   WiFi.STA.begin();
-  uint8_t mac[CREDENTIAL_LENGTH]; 
-  char macBuffer[32]; 
-  WiFi.macAddress(mac); 
-  snprintf(macBuffer, sizeof(macBuffer), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  spf("MAC:[%s]\n", macBuffer);
+  String macString = WiFi.macAddress();
+  char macStr[13];
+  macString.replace(":", "");
+  macString.toCharArray(macStr, 13);
+  spf("Mac: %s\n", macStr);
   
-  strcpy(_cfg.macAdr, macBuffer);
-
-  initWifi();
-  mqttClient.subscribe(_infoTopic);
-  mqttClient.subscribe(_configTopic);
-  mqttClient.subscribe(_pingTopic);
-  mqttClient.subscribe(_controlTopic);
-
-  char ipBuffer[CREDENTIAL_LENGTH]; 
-
-  IPAddress ip = WiFi.localIP(); 
-  snprintf(ipBuffer, sizeof(ipBuffer), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-
-  strcpy(_cfg.macAdr, macBuffer);
-  strcpy(_cfg.ipAdr, ipBuffer);
-
-  // Only initialize default outlet names if they haven't been set
-  for (int i = 0; i < _cfg.dSockets; i++) {
-    if (strlen(_cfg.outlets[i].oName) == 0) {
-      snprintf(_cfg.outlets[i].oName, CREDENTIAL_LENGTH, "Outlet_%d", i + 1);
-    }
-    if (strlen(_cfg.outlets[i].oGroup) == 0) {
-      snprintf(_cfg.outlets[i].oGroup, CREDENTIAL_LENGTH, "Group_%d", (i % 2) + 1);
-    }
-  }
-
-  for (int i = 0; i < _cfg.dSockets; i++) {
-    pinMode(SOCKET_PINS[i], OUTPUT);
-    digitalWrite(SOCKET_PINS[i], _cfg.outlets[i].oState ? HIGH : LOW);
-  }
-
-  char pingMessage[MESSAGE_LENGTH];
-  sprintf(pingMessage, "{\"did\":%i, \"name\":\"%s\"}", _cfg.id, _cfg.name);
-  pubMqttMessage(pingMessage, _pingTopic);
-}
-
-void loop() {
-  mqttClient.poll();
-  toggleOutputs();
-}
-
-void initEEPROM() {
-  EEPROM.begin(EEPROM_SIZE);
-  if (!readEEPROM()) {
-    spl("No Config Defined");
-    writeEEPROM();
-  } 
-}
-
-void writeEEPROM() {
-  spl("Writing to EEPROM...");
-  EEPROM.put(EEPROM_CONFIG, _cfg);
-  EEPROM.write(EEPROM_CFG_DEFINED, IS_DEFINED);
-  if (EEPROM.commit()) {
-    spl("EEPROM successfully committed");
-  } else {
-    spl("ERROR! EEPROM commit failed");
-  }
-}
-
-bool readEEPROM(){
-  if (EEPROM.read(EEPROM_CFG_DEFINED) == IS_DEFINED ){
-    spl("Loaded CONFIG from EEPROM");
-    EEPROM.get(EEPROM_CONFIG, _cfg);
-    return true;
-  } else {
-    Serial.println(("Config EEPROM Empty"));
-    return false;
-  }
-}
-
-void clearEEPROM(){
-  EEPROM.write(EEPROM_CFG_DEFINED, 255);
-  EEPROM.commit();
-  Serial.println(("EEPROM Cleared!"));
-}
-
-void initWifi() {
-  sp("Configuring WiFi");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  uint32_t connectStart = millis();
-
-  while (WiFi.status() != WL_CONNECTED && millis() - connectStart < 20000) {
-    if (millis() - previousMillis >= WIFI_INTERVAL) {
-      previousMillis = millis();
-      sp(".");
-    }
-  }
-  spl("");
-  spl("WiFi connected");
-  if (!initMQTT()) {
-    spl("MQTT setup failed...");
-  }
-}
-
-bool initMQTT() {
-  if (!mqttClient.connect(_cfg.mqtt_server, _cfg.port)) {
-    spf("MQTT connection failed! Error code = %i\n", mqttClient.connectError());
-    while (1);
-  }
-  sprintf(_mainTopic, "%s/#", _cfg.project);
-  sprintf(_configTopic, "%s/config", _cfg.project);
-  sprintf(_infoTopic, "%s/info", _cfg.project);
-  sprintf(_pingTopic, "%s/ping", _cfg.project);
-  sprintf(_controlTopic, "%s/control", _cfg.project);
+  loadConfig(macStr);
+  setupWiFi();
+  setupMQTT();
   
-  spl("Connection established with MQTT broker!");
+  snprintf(DEVICE_TOPIC, TOPIC_LENGTH, "%s/%s", MAIN_TOPIC, macStr);
+  
   mqttClient.onMessage(onMqttMessage);
-  return true;
+  mqttClient.subscribe(MAIN_TOPIC);
+  mqttClient.subscribe(DEVICE_TOPIC);
 }
 
 void onMqttMessage(int messageSize) {
-  (mqttClient.messageTopic()).toCharArray(_currentTopic,TOPIC_LENGTH);;
-  int charMsgPos = 0;
-  while (mqttClient.available()) {
-    char readChar = (char)mqttClient.read();
-    _subMessage[charMsgPos] = readChar;
-    charMsgPos++;
-  }
-  _subMessage[charMsgPos] = '\0';
-  spl(_subMessage);
-  jsonDecoder();
-  memset(_subMessage, 0, MESSAGE_LENGTH);
-  memset(_currentTopic, 0, TOPIC_LENGTH);
+  char topic[50];
+  mqttClient.messageTopic().toCharArray(topic, 50);
+  
+
+  byte* payload = new byte[messageSize];
+  mqttClient.read(payload, messageSize);
+  
+  jsonDecoder(topic, payload, messageSize);
+  
+  delete[] payload;
 }
 
-void pubMqttMessage(char pubMessage[], char subTopic[]) {
-  mqttClient.beginMessage(subTopic);
-  mqttClient.printf(pubMessage);
-  mqttClient.endMessage();
-}
+void jsonDecoder(char* topic, byte* payload, unsigned int length) {
+  char* payloadStr = new char[length + 1];
+  memcpy(payloadStr, payload, length);
+  payloadStr[length] = '\0';
 
-void jsonDecoder() {
   StaticJsonBuffer<MESSAGE_LENGTH> jsonBuffer;
-  JsonObject& message = jsonBuffer.parseObject(_subMessage);
+  JsonObject& root = jsonBuffer.parseObject(payloadStr);
+  
+  delete[] payloadStr;
 
-  if (!message.success()) {
-    spl("Contains no JSON or is invalid!");
+  if (!root.success()) {
+    spl("JSON parsing failed");
     return;
   }
-  if (message["did"] != DEVICE_ID){
-    if (strcmp(_currentTopic, _pingTopic) == 0) {
-      pingHandle(message);
-    } else if (strcmp(_currentTopic, _infoTopic) == 0) {
-      infoHandle(message);
-    } else if (strcmp(_currentTopic, _configTopic) == 0) {
-      configHandle(message);
-    } else if (strcmp(_currentTopic, _controlTopic) == 0) {
-      controlHandle(message);
+  
+  if (strcmp(root["sender"], _cfg.mac) != 0) {
+    if (root.containsKey("ping")) {
+      pingHandle(root);
+    } else if (root.containsKey("info")) {
+      infoHandle(root);
+    } else if (root.containsKey("config")) {
+      configHandle(root);
+    } else if (root.containsKey("control")) {
+      controlHandle(root);
     }
   }
 }
 
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    setupWiFi();
+  }
+  
+  if (!mqttClient.connected()) {
+    setupMQTT();
+  }
+  
+  mqttClient.poll();
+}
+
+void setupWiFi() {
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    spl("Connecting to WiFi...");
+  }
+  spl("Connected to WiFi");
+  strcpy(_cfg.ipAdr, WiFi.localIP().toString().c_str());
+}
+
+void setupMQTT() {
+  while (!mqttClient.connect(MQTT_SERVER, 1883)) {
+    spl("Connecting to MQTT broker...");
+    delay(1000);
+  }
+  spl("Connected to MQTT broker");
+}
+
+void loadConfig(const char* macAddress) {
+  if (EEPROM.read(EEPROM_CFG_DEFINED) == IS_DEFINED) {
+    EEPROM.get(EEPROM_CONFIG, _cfg);
+    spl("Config loaded from EEPROM");
+    
+    if (strcmp(_cfg.mac, macAddress) != 0) {
+      strncpy(_cfg.mac, macAddress, sizeof(_cfg.mac) - 1);
+      _cfg.mac[sizeof(_cfg.mac) - 1] = '\0';
+      
+      _cfg.id = DEVICE_ID;
+      strncpy(_cfg.name, DEVICE_NAME, sizeof(_cfg.name) - 1);
+      _cfg.name[sizeof(_cfg.name) - 1] = '\0';
+      _cfg.dNumSockets = MAX_SOCKETS;
+      
+      saveConfig();
+      spl("MAC address and other fields updated in config");
+    }
+  } else {
+    strncpy(_cfg.mac, macAddress, sizeof(_cfg.mac) - 1);
+    _cfg.mac[sizeof(_cfg.mac) - 1] = '\0';
+    _cfg.id = DEVICE_ID;
+    strncpy(_cfg.name, DEVICE_NAME, sizeof(_cfg.name) - 1);
+    _cfg.name[sizeof(_cfg.name) - 1] = '\0';
+    strncpy(_cfg.project, MQTT_TOPIC, sizeof(_cfg.project) - 1);
+    _cfg.project[sizeof(_cfg.project) - 1] = '\0';
+    _cfg.dNumSockets = MAX_SOCKETS;
+    for (int i = 0; i < MAX_SOCKETS; i++) {
+      snprintf(_cfg.sockets[i].oName, sizeof(_cfg.sockets[i].oName), "Socket %d", i + 1);
+      _cfg.sockets[i].oState = false;
+      _cfg.sockets[i].oGroup[0] = '\0';
+    }
+    saveConfig();
+    spl("Default config created and saved");
+  }
+  
+  if (_cfg.id == 0) _cfg.id = DEVICE_ID;
+  if (_cfg.name[0] == '\0') strncpy(_cfg.name, DEVICE_NAME, sizeof(_cfg.name) - 1);
+  if (_cfg.dNumSockets == 0) _cfg.dNumSockets = MAX_SOCKETS;
+  
+  spf("Loaded config: MAC=%s, ID=%d, Name=%s, Sockets=%d\n", _cfg.mac, _cfg.id, _cfg.name, _cfg.dNumSockets);
+}
+
+void saveConfig() {
+  EEPROM.put(EEPROM_CONFIG, _cfg);
+  EEPROM.write(EEPROM_CFG_DEFINED, IS_DEFINED);
+  EEPROM.commit();
+  spl("Config saved to EEPROM");
+}
+
+void pubMqttMessage(const char* message, const char* topic) {
+  mqttClient.beginMessage(topic);
+  mqttClient.print(message);
+  mqttClient.endMessage();
+}
+
 void pingHandle(JsonObject& message) {
-  if (message["did"] == SERVER_ID && message["ping"] == "ALL") {
-    char pingMessage[MESSAGE_LENGTH];
-    sprintf(pingMessage, "{\"did\":%i, \"name\":\"%s\"}", _cfg.id, _cfg.name);
-    pubMqttMessage(pingMessage, _pingTopic);
+  if (strcmp(message["sender"], SERVER_NAME) == 0) {
+    if (message.containsKey("ping")) {
+      if (isConnected) {
+        sendSimplePing();
+      } else {
+        sendPingWithInfo();
+        isConnected = true;
+      }
+    }
   }
 }
 
 void infoHandle(JsonObject& message) {
-  if (message["did"] == SERVER_ID && message["requestInfo"] == DEVICE_ID) {
-    StaticJsonBuffer<MESSAGE_LENGTH> jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
-    
-    root["did"] = _cfg.id;
-    root["mac"] = _cfg.macAdr;
-    root["dname"] = _cfg.name;
-    root["ip"] = _cfg.ipAdr;
-    root["numSockets"] = _cfg.dSockets;
-    
-    JsonArray& sockets = root.createNestedArray("sockets");
-    for (int i = 0; i < _cfg.dSockets; i++) {
-      JsonObject& socket = sockets.createNestedObject();
-      socket["name"] = _cfg.outlets[i].oName;
-      socket["state"] = _cfg.outlets[i].oState;
-      socket["group"] = _cfg.outlets[i].oGroup;
-    }
-    
-    char infoMessage[MESSAGE_LENGTH];
-    root.printTo(infoMessage, MESSAGE_LENGTH);
-    pubMqttMessage(infoMessage, _infoTopic);
+  if (strcmp(message["sender"], SERVER_NAME) == 0 && message.containsKey("info")) {
+    sendPingWithInfo();
+    isConnected = true;
   }
 }
 
+void sendPingWithInfo() {
+  _jsonPubBuffer.clear();
+  StaticJsonBuffer<MESSAGE_LENGTH> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+
+  root["sender"] = _cfg.mac;
+  root["meth"] = "put";
+  
+  JsonObject& info = root.createNestedObject("info");
+  info["dMac"] = _cfg.mac;
+  info["dId"] = _cfg.id;
+  info["dName"] = _cfg.name;
+  info["dIp"] = _cfg.ipAdr;
+  info["dNumSockets"] = _cfg.dNumSockets;
+  
+  JsonArray& sockets = info.createNestedArray("dSockets");
+  for (int i = 0; i < _cfg.dNumSockets; i++) {
+    JsonObject& socket = sockets.createNestedObject();
+    socket["sId"] = i + 1;
+    socket["sName"] = _cfg.sockets[i].oName;
+    socket["sState"] = _cfg.sockets[i].oState;
+    socket["sGroup"] = _cfg.sockets[i].oGroup;
+  }
+  
+  root.printTo(_pubBuf, sizeof(_pubBuf));
+  pubMqttMessage(_pubBuf, DEVICE_TOPIC);
+  spl("Sent device info");
+  
+  spf("Sent info message: %s\n", _pubBuf);
+}
+
+void sendSimplePing() {
+  StaticJsonBuffer<MESSAGE_LENGTH> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["sender"] = _cfg.mac;
+  root["meth"] = "inf";
+  root["ping"] = "pong";
+
+  char pingMessage[MESSAGE_LENGTH];
+  root.printTo(pingMessage, MESSAGE_LENGTH);
+  pubMqttMessage(pingMessage, DEVICE_TOPIC);
+  spl("Sent simple ping");
+}
+
 void configHandle(JsonObject& message) {
-  if (message["sId"] == SERVER_ID && message.containsKey("dConfig")) {
-    JsonObject& configMsg = message["dConfig"];
-    if (configMsg["dId"] == _cfg.id && strcmp(configMsg["dMac"], _cfg.macAdr) == 0) {
-      bool configChanged = false;
-
-      if (strcmp(configMsg["dName"], _cfg.name) != 0) {
-        strcpy(_cfg.name, configMsg["dName"]);
-        configChanged = true;
-      }
-      if (strcmp(configMsg["dIp"], _cfg.ipAdr) != 0) {
-        strcpy(_cfg.ipAdr, configMsg["dIp"]);
-        configChanged = true;
-      }
-
-      if (configMsg.containsKey("sockets")) {
-        JsonArray& socketArray = configMsg["sockets"];
-        for (int i = 0; i < _cfg.dSockets && i < socketArray.size(); i++) {
-          JsonObject& socketConfig = socketArray[i];
-          if (socketConfig.containsKey("name")) {
-            if (strcmp(_cfg.outlets[i].oName, socketConfig["name"]) != 0) {
-              strncpy(_cfg.outlets[i].oName, socketConfig["name"], CREDENTIAL_LENGTH);
-              configChanged = true;
-            }
-          }
-          if (socketConfig.containsKey("group")) {
-            if (strcmp(_cfg.outlets[i].oGroup, socketConfig["group"]) != 0) {
-              strncpy(_cfg.outlets[i].oGroup, socketConfig["group"], CREDENTIAL_LENGTH);
-              configChanged = true;
-            }
-          }
-          if (socketConfig.containsKey("state")) {
-            if (_cfg.outlets[i].oState != socketConfig["state"]) {
-              _cfg.outlets[i].oState = socketConfig["state"];
-              configChanged = true;
-            }
+  if (strcmp(message["sender"], SERVER_NAME) == 0 && message.containsKey("config")) {
+    JsonObject& config = message["config"];
+    if (strcmp(config["dMac"], _cfg.mac) == 0) {
+      if (config.containsKey("dName")) strcpy(_cfg.name, config["dName"]);
+      if (config.containsKey("dNumSockets")) _cfg.dNumSockets = config["dNumSockets"];
+      
+      if (config.containsKey("dSockets")) {
+        JsonArray& sockets = config["dSockets"];
+        for (JsonArray::iterator it = sockets.begin(); it != sockets.end(); ++it) {
+          JsonObject& socket = *it;
+          int sId = socket["sId"];
+          if (sId > 0 && sId <= MAX_SOCKETS) {
+            int index = sId - 1;
+            if (socket.containsKey("sName")) strcpy(_cfg.sockets[index].oName, socket["sName"]);
+            if (socket.containsKey("sGroup")) strcpy(_cfg.sockets[index].oGroup, socket["sGroup"]);
           }
         }
       }
-
-      if (configChanged) {
-        writeEEPROM();
-        spl("Config updated and saved to EEPROM");
-        
-        // Send a confirmation message back to the server
-        StaticJsonBuffer<MESSAGE_LENGTH> jsonBuffer;
-        JsonObject& root = jsonBuffer.createObject();
-        root["did"] = _cfg.id;
-        root["status"] = "updated";
-        root["name"] = _cfg.name;
-        root["ip"] = _cfg.ipAdr;
-        
-        JsonArray& outletArray = root.createNestedArray("outlets");
-        for (int i = 0; i < _cfg.dSockets; i++) {
-          JsonObject& outlet = outletArray.createNestedObject();
-          outlet["name"] = _cfg.outlets[i].oName;
-          outlet["group"] = _cfg.outlets[i].oGroup;
-          outlet["state"] = _cfg.outlets[i].oState;
-        }
-        
-        char confirmMessage[MESSAGE_LENGTH];
-        root.printTo(confirmMessage, MESSAGE_LENGTH);
-        pubMqttMessage(confirmMessage, _configTopic);
-      } else {
-        spl("No changes in config");
-      }
+      
+      saveConfig();
+      sendPingWithInfo();
     }
   }
 }
 
 void controlHandle(JsonObject& message) {
-  if (message["sId"] == SERVER_ID) {
-    JsonObject& controlMsg = message["dControl"];
-    if (controlMsg["did"] == _cfg.id && strcmp(controlMsg["mac"], _cfg.macAdr) == 0) {
-      const char* socketName = controlMsg["socketName"];
-      bool newState = controlMsg["state"];
-      
-      for (int i = 0; i < _cfg.dSockets; i++) {
-        if (strcmp(_cfg.outlets[i].oName, socketName) == 0) {
-          _cfg.outlets[i].oState = newState;
-          digitalWrite(SOCKET_PINS[i], newState ? HIGH : LOW);
-          
-          // Send confirmation message
-          StaticJsonBuffer<MESSAGE_LENGTH> jsonBuffer;
-          JsonObject& root = jsonBuffer.createObject();
-          root["did"] = _cfg.id;
-          root["socketName"] = socketName;
-          root["newState"] = newState;
-          root["status"] = "updated";
-          
-          char confirmMessage[MESSAGE_LENGTH];
-          root.printTo(confirmMessage, MESSAGE_LENGTH);
-          pubMqttMessage(confirmMessage, _controlTopic);
-          
-          spl("Socket state updated");
-          writeEEPROM();  // Save the new state to EEPROM
-          return;
+  if (strcmp(message["sender"], SERVER_NAME) == 0 && message.containsKey("control")) {
+    JsonObject& control = message["control"];
+    if (strcmp(control["dMac"], _cfg.mac) == 0) {
+      if (control.containsKey("dSockets")) {
+        JsonArray& sockets = control["dSockets"];
+        for (JsonArray::iterator it = sockets.begin(); it != sockets.end(); ++it) {
+          JsonObject& socket = *it;
+          int sId = socket["sId"];
+          if (sId > 0 && sId <= MAX_SOCKETS) {
+            int index = sId - 1;
+            if (socket.containsKey("sState")) {
+              _cfg.sockets[index].oState = socket["sState"];
+              digitalWrite(SOCKET_PINS[index], _cfg.sockets[index].oState ? HIGH : LOW);
+            }
+          }
         }
       }
-      
-      spl("Socket not found");
-    }
-  }
-}
-
-void toggleOutputs() {
-  for (int i = 0; i < _cfg.dSockets; i++) {
-    if (_cfg.outlets[i].oState) {
-      digitalWrite(SOCKET_PINS[i], HIGH);
-    } else {
-      digitalWrite(SOCKET_PINS[i], LOW);
+      sendPingWithInfo();
     }
   }
 }
