@@ -330,17 +330,21 @@ function cleanupInactiveDevices() {
   const currentTime = Date.now();
   const inactiveThreshold = 5 * 60 * 1000; // 5 minutes
 
-  activeDevices.forEach((deviceMac, index) => {
-    LogDeviceInfo.findOne({ dMac: deviceMac })
-      .then(device => {
-        if (!device || (currentTime - device.dLastConnection.getTime() > inactiveThreshold)) {
-          console.log(`Removing inactive device: ${deviceMac}`);
-          activeDevices.splice(index, 1);
-        }
-      })
-      .catch(err => console.error(`Error checking device activity: ${deviceMac}`, err));
-  });
+  LogDeviceInfo.updateMany(
+    { 
+      dConnected: true, 
+      dLastConnection: { $lt: new Date(currentTime - inactiveThreshold) }
+    },
+    { $set: { dConnected: false } }
+  )
+    .then(result => {
+      console.log(`${result.modifiedCount} inactive devices marked as disconnected`);
+      if (result.modifiedCount > 0) {
+        updateDeviceList(); // Update the device list only if changes were made
+      }
+    })
+    .catch(err => console.error('Error cleaning up inactive devices:', err));
 }
 
-// Call this function periodically, e.g., every 5 minutes
+// Call this function periodically
 setInterval(cleanupInactiveDevices, 5 * 60 * 1000);
