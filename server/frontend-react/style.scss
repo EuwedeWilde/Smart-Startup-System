@@ -1,0 +1,198 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+$primaryColor: #fff;
+$secondaryColor: #333;
+$accentColor1: #666;
+$accentColor2: #bbb;
+$highlightColor: #f08;
+
+* { 
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+.page {
+  width: 60vw;
+  margin: 0 auto;
+}
+
+.header {
+  background-color: $secondaryColor;
+  color: $primaryColor;
+  text-align: center;
+  padding: 3vh 0;
+  font-family: 'Montserrat', sans-serif;
+  height: 20vh;
+}
+
+.header__title {
+  font-size: 2rem;
+  font-weight: bold;
+  margin: 0;
+}
+
+.header__nav {
+  display: flex;
+  justify-content: center;
+  flex-direction: row;
+  margin-top: 1rem;
+}
+
+.header__links {
+  display: flex;
+  flex-direction: row;  
+  list-style-type: none;
+  color: $primaryColor;
+}
+
+.header__link {
+  padding: 0 1rem;
+  margin: auto 0;
+  text-decoration: none;
+  color:inherit;
+  &:hover {
+    color: $highlightColor;
+  }
+}
+
+.device-list {
+  height: 40vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.device-list__title {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin: auto 0;
+  color: $secondaryColor;
+}
+
+.device-list__button {
+  background: none;
+	color: inherit;
+	border: none;
+	padding: 0;
+	font: inherit;
+	outline: inherit;
+}
+
+.device-list__items {
+  padding: 1rem;
+  border-bottom: 1px solid $accentColor2;
+  font-family: 'Space Mono', monospace;
+  background-color: $secondaryColor;
+  list-style-type: none;
+  height: 32vh;
+  .device-list__item--connected {
+    color: $primaryColor;
+    cursor: pointer;
+    &:hover {
+      color: $highlightColor;
+    }
+  }
+  .device-list__item--disconnected {
+    color: $accentColor2;
+    cursor: default;
+  }
+}
+
+.device-list__item {
+  padding: 1rem;
+}
+
+.device-list__sockets {
+  list-style-type: none;
+}
+
+.device-list__socket {
+  font-size: 1rem;
+  text-align: left;
+}
+
+.device-config {
+  height: 40vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.device-config__title {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin: auto 0;
+  color: $secondaryColor;
+}
+
+.device-config__form {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 32vh;
+  padding: 1rem;
+  background-color: $secondaryColor;
+  font-family: 'Space Mono', monospace;
+  color: $primaryColor;
+}
+
+.device-config__mode-switch {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
+.device-config__button {
+  background-color: inherit;
+  color: inherit;
+  border: none;
+  padding: 0;
+  font: inherit;
+  outline: inherit;
+  width: 100%;
+  padding: 0.25rem;
+  border: 1px solid $secondaryColor;
+  &:hover {
+    cursor: pointer;
+    border-color: #fff;
+    color: $highlightColor;
+  }
+}
+
+.device-config__device-menu {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.device-config__socket-select {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 1rem;
+}
+
+.device-config__socket-config {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.device-config__socket-menu {
+  display: grid;
+  grid-template-columns: 1fr 1fr; 
+}
+
+.device-config__input {
+  border: 1px solid $primaryColor;
+  background-color: $secondaryColor;
+  font-family: 'Space Mono', monospace;
+  color: $primaryColor;
+  text-align: right;
+  padding: 0 0.5rem;
+  &:focus {
+    outline: none;
+  }
+}
+

@@ -4,17 +4,17 @@ const express = require('express');
 const path = require('path');
 const WebSocket = require('ws');
 const http = require('http');
+const { info } = require("console");
 
 const PORT = process.env.PORT || 3000;
 const MQTT_BROKER = "mqtt://inmat.nl";
 const MONGODB_URI = 'mongodb://127.0.0.1:27017/local';
-const SERVER_ID = 0;
+const SERVER_NAME = "server";
+
 const MAIN_TOPIC = "S3";
-const INFO_TOPIC = `${MAIN_TOPIC}/info`;
-const CONFIG_TOPIC = `${MAIN_TOPIC}/config`;
-const PING_TOPIC = `${MAIN_TOPIC}/ping`;
-const CONTROL_TOPIC = `${MAIN_TOPIC}/control`;
-const INACTIVE_THRESHOLD = 15000;
+
+const PING_INTERVAL = 5000;
+const INACTIVE_THRESHOLD = 10000;
 
 const app = express();
 const server = http.createServer(app);
@@ -22,8 +22,11 @@ const wss = new WebSocket.Server({ server });
 
 const client = mqtt.connect(MQTT_BROKER);
 
-app.use(express.static(path.join(__dirname, '../frontend/dist')));
-app.get('*', (res) => {
+app.use(
+  express.static(path.join(__dirname, '../frontend/dist'))
+);
+
+app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../frontend/dist', 'index.html'));
 });
 
@@ -32,37 +35,29 @@ server.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
 mongoose.connect(MONGODB_URI)
   .then(async () => {
     console.log('Connected to MongoDB');
-    try {
-      await mongoose.connection.dropCollection('device_info');
-      console.log('Dropped device_info collection');
-    } catch (error) {
-      if (error.code !== 26) {
-        console.error('Error dropping device_info collection:', error);
-      }
-    }
   })
   .catch((err) => console.log(err));
 
-const logSchemaMQTT = new mongoose.Schema({
+const lsMqttMessages = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   topic: String,
   message: mongoose.Schema.Types.Mixed,
 });
 
-const logSchemaInfo = new mongoose.Schema({
-  timestamp: { type: Date, default: Date.now },
-  dMac: String,
-  dId: Number,
-  dName: String,
-  dIp: String,
-  dGroup: String,
-  dNumSockets: Number,
+const lsDeviceInfo = new mongoose.Schema({
+  timestamp: { type: Date, default: Date.now }, // from Device means the data can not be changed by the client, but to the device it means it can
+  dMac: String, // EEPROM from Device 
+  dId: Number, // EEPROM from and to Device
+  dName: String, // EEPROM from and to Device
+  dIp: String, // EEPROM from and to Device
+  dGroup: String, 
+  dNumSockets: Number, // EEPROM from Device
   dSockets: [{
-    sId: Number,
+    sId: Number, // from Device (1 - dNumSockets)
     sName: String,
-    sState: Boolean,
+    sState: Boolean, // from and to Device
     sGroup: String,
-    sInUse: Boolean,
+    sInUse: Boolean, // to Device
     sLastInUse: Date,
     sLastUpdate: Date
   }],
@@ -71,323 +66,385 @@ const logSchemaInfo = new mongoose.Schema({
   dLastUpdate: Date
 });
 
-const LogMQTT = mongoose.model('LogMQTT', logSchemaMQTT, 'mqtt_log');
-const LogDeviceInfo = mongoose.model('LogDeviceInfo', logSchemaInfo, 'device_info');
+const dbMqttMessages = mongoose.model('dbMqttMessages', lsMqttMessages, 'mqtt_messages');
+const dbDeviceInfo = mongoose.model('dbDeviceInfo', lsDeviceInfo, 'device_info');
 
-let didList = [];
-let deviceInfo = new Map();
-let lastPingTime = new Map();
+setInterval(periodicTasks, PING_INTERVAL);
 
-setInterval(periodicTasks, 10000);
+function periodicTasks() {
+  pingToDevices();
+  updateInactiveDevices();
+}
 
-client.on("connect", onMQTTConnect);
-client.on("message", onMQTTMessage);
+async function updateInactiveDevices() {
+  const currentTime = new Date();
+  try {
+    const devices = await dbDeviceInfo.find({ dConnected: true });
+    let deviceUpdated = false;
+    
+    for (const device of devices) {
+      if (currentTime - new Date(device.dLastConnection) > INACTIVE_THRESHOLD) {
+        device.dConnected = false;
+        await device.save();
+        deviceUpdated = true;
+      }
+    }
+    
+    // Only broadcast if a device was actually updated
+    if (deviceUpdated) {
+      devicesToWebSocket(wss);
+    }
+  } catch (err) {
+    console.error("Error finding connected devices:", err);
+  }
+}
 
 wss.on('connection', onWebSocketConnection);
 
-function onMQTTConnect() {
+function onWebSocketConnection(ws) {
+  console.log('New WebSocket connection established');
+
+  ws.on('message', (message) => {messageFromWebSocket(ws, message)});  
+  ws.on('error', (error) => console.error('WebSocket error:', error));
+  ws.on('close', () => console.log('WebSocket connection closed'));
+
+  devicesToWebSocket(ws);
+}
+
+function devicesToWebSocket(ws) {
+  dbDeviceInfo.find({})
+    .then(devices => {
+      const deviceList = devices.map((device) => ({
+        dMac: device.dMac,
+        dId: device.dId,
+        dName: device.dName,
+        dIp: device.dIp,
+        dNumSockets: device.dNumSockets,
+        dSockets: device.dSockets,
+        dConnected: device.dConnected,
+        dLastConnection: device.dLastConnection,
+        dLastUpdate: device.dLastUpdate
+      }));
+
+      // If ws is the WebSocket server (wss), broadcast to all clients
+      if (ws instanceof WebSocket.Server) {
+        ws.clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ devices: deviceList }));
+          }
+        });
+      }
+      // If ws is a single client connection, send only to that client
+      else if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ devices: deviceList }));
+      }
+    })
+    .catch(err => {
+      console.error('Error finding connected devices:', err);
+    });
+}
+
+function messageFromWebSocket(ws, message) {
+  try {
+    const jsonMessage = JSON.parse(message);
+    console.log('Parsed WebSocket message:', jsonMessage); 
+    if ('config' in jsonMessage) {
+      configFromWebSocket(jsonMessage.config.device, jsonMessage.config.config);
+    } else if ('control' in jsonMessage) {
+      controlFromWebSocket(jsonMessage.device, jsonMessage.control);
+    }
+  } catch (error) {
+    console.error('Failed to parse message as JSON:', error);
+  }
+}
+
+async function configFromWebSocket(device, config) {
+  try {
+    const deviceInfoOld = await infoFromDataBase(device);
+    const deviceInfoNew = config;
+
+    const deviceConfig = {
+      dId: deviceInfoNew.dId,
+      dName: deviceInfoNew.dName,
+      dIp: deviceInfoNew.dIp,
+    };
+
+    if (
+      deviceInfoOld.dId !== deviceInfoNew.dId ||
+      deviceInfoOld.dName !== deviceInfoNew.dName ||
+      deviceInfoOld.dIp !== deviceInfoNew.dIp
+    ) {
+      configToDevice(device, deviceConfig);
+    }
+    updateDeviceConfig(device, config);
+  } catch (err) {
+    console.error('Error updating device info:', err);
+  }
+}
+
+async function controlFromWebSocket(device, control) {
+  try {
+    dbDeviceInfo.findOneAndUpdate(
+      { dMac: device },
+      { $set: { dSockets: control.control } },  // Extract the control array
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    )
+    
+    // Pass just the control array, not the entire control object
+    controlToDevice(control.device, control.control);
+  } catch (err) {
+    console.error('Error updating device control:', err);
+  }
+}
+
+client.on("connect", onMqttConnect);
+client.on("message", onMqttMessage);
+
+function onMqttConnect() {
   console.log("Connected to MQTT broker");
-  client.subscribe([INFO_TOPIC, CONFIG_TOPIC, PING_TOPIC, CONTROL_TOPIC], (err) => {
+  client.subscribe([MAIN_TOPIC+"/#"], (err) => { // subscribe to all topics under MAIN_TOPIC
     if (err) {
       console.error("Failed to subscribe:", err);
     } else {
       console.log("Successfully subscribed to topics");
-      rqstPingDevices();
+      pingToDevices();
     }
   });
 }
 
-function onMQTTMessage(topic, message) {
+function onMqttMessage(topic, message) {
   try {
-    const parsedMessage = JSON.parse(message.toString());
-    if (topic === PING_TOPIC) {
-      handlePingTopic(parsedMessage);
-    } else if (topic === INFO_TOPIC) {
-      handleInfoTopic(parsedMessage);
-    } else if (topic === CONFIG_TOPIC) {
-      console.log("Received config message:", parsedMessage);
-      handleConfigTopic(parsedMessage);
-      logMessage(topic, parsedMessage);
+    const jsonMessage = JSON.parse(message.toString());
+    if (jsonMessage.sender !== SERVER_NAME) {
+      // Handle control messages first, even if they come with a ping
+      if ('control' in jsonMessage && Array.isArray(jsonMessage.control)) {
+        controlFromDevice(jsonMessage);
+      }
+      
+      if ('ping' in jsonMessage) {
+        pingFromDevice(jsonMessage);
+      } else if ('info' in jsonMessage) {
+        infoFromDevice(jsonMessage);
+      }
     }
   } catch (error) {
     console.error("Failed to parse message as JSON:", error);
   }
 }
 
-function onWebSocketConnection(ws) {
-  console.log('New WebSocket connection established');
-
-  ws.on('message', (message) => handleWebSocketMessage(ws, message));
-  ws.on('error', (error) => console.error('WebSocket error:', error));
-  ws.on('close', () => console.log('WebSocket connection closed'));
-
-  sendInitialDeviceList(ws);
+function pingToDevices() { 
+  client.publish(MAIN_TOPIC, JSON.stringify({ sender: SERVER_NAME, meth: "get", ping: "ping" })); // Send ping to all devices, they respond in their corresponding subtopics.
+  console.log('Sent ping to devices');
 }
 
-function handleWebSocketMessage(ws, message) {
-  try {
-    const data = JSON.parse(message);
-    console.log('Received message:', data);
-
-    switch (data.type) {
-      case 'updateDevice':
-        updateDevice(data.did, data.newName, data.newIp, data.socketUpdate);
-        break;
-      case 'selectDevice':
-        console.log('Device selected:', data);
-        break;
-      case 'requestDeviceList':
-        updateDeviceList();
-        break;
-      case 'controlSocket':
-        console.log('Control socket:', data);
-        controlSocket(data.did, data.mac, data.socketName, data.state);
-        break;
-      default:
-        console.log('Unknown message type:', data.type);
-    }
-  } catch (error) {
-    console.error('Error processing WebSocket message:', error);
-  }
+function configToDevice(device, config) {
+  client.publish(device === "*" ? MAIN_TOPIC : MAIN_TOPIC + `/${device}`, JSON.stringify({ sender: SERVER_NAME, meth: "put", config: config })); // Send config to changed device
 }
 
-function periodicTasks() {
-  rqstPingDevices();
-  checkAndRemoveInactiveDevices();
-  console.log("deviceInfo:", deviceInfo);
-  console.log("didList:", didList);
-}
-
-function handlePingTopic(parsedMessage) {
-  if (parsedMessage.sender !== "Server_" + SERVER_ID) {
-    const deviceId = parsedMessage.dId;
-    lastPingTime.set(deviceId, Date.now());
-    
-    if (!didList.includes(deviceId)) {
-      didList.push(deviceId);
-      updateDeviceList();
-    }
-    
-    if (!deviceInfo.has(deviceId)) {
-      deviceInfo.set(deviceId, { dId: deviceId, dName: parsedMessage.name });
-      rqstInfoDevices(deviceId);
-    } else {
-      const existingDevice = deviceInfo.get(deviceId);
-      if (existingDevice.dName !== parsedMessage.name) {
-        existingDevice.dName = parsedMessage.name;
-        deviceInfo.set(deviceId, existingDevice);
-        updateDeviceList();
-      }
-    }
-  }
-  logMessage(PING_TOPIC, parsedMessage);
-}
-
-function checkAndRemoveInactiveDevices() {
-  const currentTime = Date.now();
-
-  for (let [deviceId, lastPing] of lastPingTime) {
-    if (currentTime - lastPing > INACTIVE_THRESHOLD) {
-      console.log(`Device ${deviceId} is inactive. Removing...`);
-      didList = didList.filter(id => id !== deviceId);
-
-      // LogDeviceInfo.deleteOne({ did: deviceId })
-      //   .then(() => console.log(`Device ${deviceId} removed from database`))
-      //   .catch(err => console.error(`Error removing device ${deviceId} from database:`, err));
-      LogDeviceInfo.updateOne({ did: deviceId }, { $set: { connected: false } })
-      .then(() => console.log(`Device ${deviceId} removed from database`))
-      .catch(err => console.error(`Error removing device ${deviceId} from database:`, err));
-    }
-  }
-  updateDeviceList();
-}
-
-function handleInfoTopic(parsedMessage) {
-  if (parsedMessage.did !== SERVER_ID) {
-    const updateData = {
-      dMac: parsedMessage.dMac,
-      dId: parsedMessage.dId,
-      dName: parsedMessage.dName,
-      dIp: parsedMessage.dIp,
-      dGroup: parsedMessage.dGroup || '',
-      dNumSockets: parsedMessage.sockets.length,
-      dSockets: parsedMessage.sockets.map(socket => ({
-        sId: socket.id,
-        sName: "" ,
-        sState: socket.state,
-        sGroup: socket.group || '',
-        sConnected: socket.connected || true,
-        sLastConnection: new Date(),
-        sLastUpdate: new Date()
-      })),
-      dConnected: parsedMessage.connected || true,
-      dLastConnection: new Date(),
-      dLastUpdate: new Date()
-    };
-
-    LogDeviceInfo.findOneAndUpdate(
-      { dId: parsedMessage.did },
-      { $set: updateData },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    )
-      .then((updatedDevice) => {
-        console.log("Device info updated successfully:", updatedDevice);
-        deviceInfo.set(parsedMessage.did, updateData);
-        updateDeviceList();
-      })
-      .catch(err => console.error("Failed to update device info:", err));
-  }  
-  logMessage(INFO_TOPIC, parsedMessage);
-}
-
-function updateDeviceList() {
-  const deviceListArray = Array.from(deviceInfo.entries()).map(([mac, device]) => ({
-    dMac: mac,
-    dId: device.dId,
-    dName: device.dName,
-    dIp: device.dIp,
-    dGroup: device.dGroup,
-    dNumSockets: device.dNumSockets,
-    dSockets: device.dSockets.map(socket => ({
-      sId: socket.sId,
-      sName: socket.sName,
-      sState: socket.sState,
-      sGroup: socket.sGroup,
-      sConnected: socket.sConnected,
-      sLastConnection: socket.sLastConnection,
-      sLastUpdate: socket.sLastUpdate
-    })),
-    dConnected: device.dConnected,
-    dLastConnection: device.dLastConnection,
-    dLastUpdate: device.dLastUpdate
+function controlToDevice(device, control) {
+  const topic = device === "*" ? MAIN_TOPIC : MAIN_TOPIC + `/${device}`;
+  client.publish(topic, JSON.stringify({ 
+    sender: SERVER_NAME, 
+    meth: "put", 
+    control: control 
   }));
+}
 
-  wss.clients.forEach((ws) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ 
-        type: 'updateDeviceList', 
-        deviceInfo: deviceListArray
+function pingFromDevice(message) { // typical message structure: "S3/XXXXXXXXXXXX" {sender: "XXXXXXXXXXXX", meth: "inf", ping: "pong" }
+  const deviceMac = message.sender;
+  updateDevicePing(deviceMac);
+  console.log('Received ping from device:', deviceMac);
+}
+
+function infoFromDevice(message) { // typical message structure: "S3/XXXXXXXXXXXX" {sender: "XXXXXXXXXXXX", meth: "inf", info: {dId: 001, dName: "Device 1", dIp: "000.000.000.000", dNumSockets: 2, dSockets: [{sId: 1, sState: false}, {sId: 2, sState: false}]}}
+  const deviceMac = message.sender;
+  const deviceInfo = message.info;
+  updateDeviceInfo(deviceMac, deviceInfo);
+  console.log('Received info from device:', deviceMac);
+}
+
+function controlFromDevice(message) {
+  const deviceMac = message.sender;
+  const deviceControl = message.control;
+  console.log('Received control from device:', deviceMac, deviceControl);
+  updateSocketState(deviceMac, deviceControl);
+}
+
+async function updateDevicePing(deviceMac) {
+  try {
+    const existingDevice = await dbDeviceInfo.findOne({ dMac: deviceMac });
+    if (existingDevice) {
+      existingDevice.dLastConnection = new Date();
+      existingDevice.dConnected = true; 
+      await existingDevice.save();
+    } else {
+      console.error(`Device ${deviceMac} not found`);
+    }
+  } catch (err) {
+    console.error(`Error finding device ${deviceMac}:`, err);
+  }
+}
+
+async function updateDeviceInfo(deviceMac, deviceInfo) {
+  try {
+    console.log('Updating device info:', deviceMac, deviceInfo);
+    
+    // First, try to find existing device to preserve socket configurations
+    const existingDevice = await dbDeviceInfo.findOne({ dMac: deviceMac });
+    
+    let initializedSockets;
+    if (existingDevice) {
+      // Preserve existing socket configurations while updating states from device
+      initializedSockets = Array.from({ length: deviceInfo.dNumSockets }, (_, index) => {
+        const existingSocket = existingDevice.dSockets.find(s => s.sId === (index + 1));
+        return {
+          sId: index + 1,
+          sName: existingSocket?.sName || "Undefined",
+          sState: deviceInfo.dSockets?.[index]?.sState || false,
+          sGroup: existingSocket?.sGroup || "",
+          sInUse: existingSocket?.sInUse || false,
+          sLastInUse: existingSocket?.sLastInUse || null,
+          sLastUpdate: existingSocket?.sLastUpdate || new Date()
+        };
+      });
+    } else {
+      // Initialize new sockets if device doesn't exist
+      initializedSockets = Array.from({ length: deviceInfo.dNumSockets }, (_, index) => ({
+        sId: index + 1,
+        sName: "Undefined",
+        sState: deviceInfo.dSockets?.[index]?.sState || false,
+        sGroup: "",
+        sInUse: false,
+        sLastInUse: null,
+        sLastUpdate: new Date()
       }));
     }
-  });
-}
 
-function logMessage(topic, message) {
-  new LogMQTT({ topic, message }).save()
-    .then(() => console.log("Log entry saved successfully"))
-    .catch(err => console.error("Failed to save log entry:", err));
-}
-
-function rqstPingDevices() {
-  client.publish(PING_TOPIC, JSON.stringify({ sender: "Server_" + SERVER_ID, request: "ALL"}));
-  console.log("Pinged all devices");
-}
-
-function rqstInfoDevices(deviceId) {
-  client.publish(INFO_TOPIC, JSON.stringify({ sender: "Server_" + SERVER_ID, request: deviceId}));
-  console.log(`Requested info from device ${deviceId}`);
-}
-
-function sendInitialDeviceList(ws) {
-  const deviceListArray = Array.from(deviceInfo.entries()).map(([id, device]) => {
-    return [id, device];
-  });
-  ws.send(JSON.stringify({ 
-    type: 'updateDeviceList', 
-    deviceInfo: deviceListArray
-  }));
-}
-
-function updateDevice(did, newName, newIp, socketUpdate) {
-  console.log(`Updating device: did=${did}, newName=${newName}, newIp=${newIp}, socketUpdate=`, socketUpdate);
-  LogDeviceInfo.findOneAndUpdate(
-    { did: did },
-    { $set: { dname: newName, ip: newIp } },
-    { new: true, runValidators: true }
-  )
-    .then((updatedDevice) => {
-      if (updatedDevice) {
-        console.log(`Device ${did} updated:`, updatedDevice);
-        
-        const currentDevice = deviceInfo.get(did);
-        const updatedDeviceInfo = {
-          dId: updatedDevice.did,
-          dMac: updatedDevice.mac,
-          dName: updatedDevice.dname,
-          dIp: updatedDevice.ip,
-          sockets: currentDevice.sockets.map(socket => ({ ...socket }))
-        };
-
-        if (socketUpdate) {
-          const socketIndex = updatedDeviceInfo.sockets.findIndex(s => s.name === socketUpdate.oldName);
-          if (socketIndex !== -1) {
-            updatedDeviceInfo.sockets[socketIndex] = {
-              name: socketUpdate.newName,
-              state: socketUpdate.state,
-              group: socketUpdate.group
-            };
-          }
-        }
-        
-        deviceInfo.set(did, updatedDeviceInfo);
-        
-        updateDeviceList();
-        
-        const configMessage = {
-          sId: SERVER_ID,
-          dConfig: {
-            dId: updatedDeviceInfo.dId,
-            dMac: updatedDeviceInfo.dMac,
-            dName: updatedDeviceInfo.dName,
-            dIp: updatedDeviceInfo.dIp,
-            sockets: updatedDeviceInfo.sockets
-          }
-        };
-        
-        client.publish(CONFIG_TOPIC, JSON.stringify(configMessage));
-        console.log("Sent config update via MQTT:", configMessage);
-      } else {
-        console.log(`Device ${did} not found`);
-      }
-    })
-    .catch((err) => {
-      console.error(`Error updating device ${did}:`, err);
-      if (err.name === 'ValidationError') {
-        console.error('Validation Error:', err.message);
-      }
-    });
-}
-
-function handleConfigTopic(parsedMessage) {
-  if (parsedMessage.did && parsedMessage.status === "updated") {
-    const deviceId = parsedMessage.did;
-    const updatedInfo = {
-      dId: deviceId,
-      dMac: deviceInfo.get(deviceId)?.dMac || '',  // Preserve the MAC address
-      dName: parsedMessage.name,
-      dIp: parsedMessage.ip,
-      sockets: parsedMessage.outlets.map(outlet => ({
-        name: outlet.name,
-        state: outlet.state,
-        group: outlet.group
-      }))
+    const deviceData = {
+      dMac: deviceMac,
+      dId: deviceInfo.dId,
+      dName: deviceInfo.dName,
+      dIp: deviceInfo.dIp, 
+      dNumSockets: deviceInfo.dNumSockets,
+      dSockets: initializedSockets,
+      dConnected: true,
+      dLastConnection: new Date()
     };
-    deviceInfo.set(deviceId, updatedInfo);
-    updateDeviceList();
+
+    const device = await dbDeviceInfo.findOneAndUpdate(
+      { dMac: deviceMac },
+      deviceData,
+      { upsert: true, new: true }
+    );
+
+    // Broadcast updated device list to all connected WebSocket clients
+    devicesToWebSocket(wss);
+
+    console.log('Device info updated successfully:', device);
+    return device;
+  } catch (err) {
+    console.error(`Error finding device ${deviceMac}:`, err);
+    throw err;
   }
 }
 
-function controlSocket(did, mac, socketName, state) {
-  console.log(`Control socket: did=${did}, mac=${mac}, socketName=${socketName}, state=${state}`);
-  const controlMessage = {
-    sId: SERVER_ID,
-    dControl: {
-      did: did,
-      mac: mac,
-      socketName: socketName,
-      state: state
+async function updateDeviceConfig(device, config) {
+  try {
+    const oldDeviceInfo = await dbDeviceInfo.findOne({ dMac: device });
+    if (!oldDeviceInfo) {
+      throw new Error(`Device with MAC ${device} not found`);
     }
-  };
-  client.publish(CONTROL_TOPIC, JSON.stringify(controlMessage));
-  console.log("Sent control update via MQTT:", controlMessage);
+
+    const updatedSockets = config.dSockets.map((newSocket, index) => {
+      let currentSocket = oldDeviceInfo.dSockets[index];
+
+      let updatedSocket = {
+        sId: newSocket.sId,
+        sName: newSocket.sName,
+        sState: newSocket.sState,
+        sGroup: newSocket.sGroup,
+        sInUse: newSocket.sInUse,
+        sLastUpdate: currentSocket ? currentSocket.sLastUpdate : new Date()
+      };
+
+      if (
+        !currentSocket ||
+        currentSocket.sName !== newSocket.sName || 
+        currentSocket.sGroup !== newSocket.sGroup || 
+        currentSocket.sInUse !== newSocket.sInUse
+      ) {
+        updatedSocket.sLastUpdate = new Date();
+      }
+
+      return updatedSocket;
+    });
+    const updatedDevice = await dbDeviceInfo.findOneAndUpdate(
+      { dMac: device }, 
+      {   
+        dId: config.dId,
+        dName: config.dName,
+        dIp: config.dIp,
+        dGroup: config.dGroup,
+        dSockets: updatedSockets,
+        dLastUpdate: new Date(), 
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    if (!updatedDevice) {
+      console.error("Failed to update device info in the database.");
+    } else {
+      console.log("Device info updated successfully:", updatedDevice);
+    }
+  } catch (err) {
+    console.error("Failed to update device info:", err);
+  }
+}
+
+async function updateSocketState(deviceMac, deviceControl) {
+  try {
+    const existingDevice = await dbDeviceInfo.findOne({ dMac: deviceMac });
+    if (existingDevice) {
+      let updated = false;
+      
+      for (const control of deviceControl) {
+        const socket = existingDevice.dSockets.find(s => s.sId === control.sId);
+        if (socket) {
+          if (socket.sState !== control.sState) {
+            socket.sState = control.sState;
+            socket.sLastUpdate = new Date();
+            updated = true;
+          }
+        }
+      }
+      
+      if (updated) {
+        await existingDevice.save();
+        // Broadcast the updated device state to all WebSocket clients
+        devicesToWebSocket(wss);
+      }
+    }
+  } catch (err) {
+    console.error(`Error updating socket state for device ${deviceMac}:`, err);
+  }
+}
+
+async function infoFromDataBase(device) {
+  try {
+    const devices = await dbDeviceInfo.find({ dMac: device });
+    return devices.map((device) => ({
+      dMac: device.dMac,
+      dId: device.dId,
+      dName: device.dName,
+      dIp: device.dIp,
+      dNumSockets: device.dNumSockets,
+      dSockets: device.dSockets,
+      dConnected: device.dConnected,
+      dLastConnection: device.dLastConnection,
+      dLastUpdate: device.dLastUpdate
+    }));
+  } catch (err) {
+    console.error('Error finding connected devices:', err);
+    throw err;
+  }
 }

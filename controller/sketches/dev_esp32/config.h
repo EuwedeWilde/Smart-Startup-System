@@ -12,10 +12,10 @@
 
 #define SERVER_NAME "server"
 
-#define DEVICE_NAME "CTRLR2"
+#define DEVICE_NAME "CTRLR"
 
-#define MAX_SOCKETS 3
+#define MAX_SOCKETS 2
 
-const int SOCKET_PINS[MAX_SOCKETS] = {33, 25, 26};
+const int SOCKET_PINS[MAX_SOCKETS] = {33, 25};
 
 #endif

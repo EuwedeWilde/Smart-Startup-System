@@ -11,7 +11,7 @@
 #define EEPROM_CFG_DEFINED 8
 #define EEPROM_CONFIG 10  
 #define EEPROM_SIZE 1024
-#define IS_DEFINED 6
+#define IS_DEFINED 7
 
 #define sp Serial.print
 #define spl Serial.println
@@ -99,7 +99,6 @@ void jsonDecoder(char* topic, byte* payload, unsigned int length) {
     spl("JSON parsing failed");
     return;
   }
-  
   if (strcmp(root["sender"], _cfg.mac) != 0) {
     if (root.containsKey("ping")) {
       pingHandle(root);
