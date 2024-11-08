@@ -3,7 +3,7 @@
   <p class="header__subtitle">By Euwe de Wilde & Interactive Matter</p>
   <nav class="header__nav">
     <a class="header__nav-item" href="/">Config</a>
-    <a class="header__nav-item" href="/Schedule">Schedule</a>
+    <a class="header__nav-item" href="/schedule">Schedule</a>
     <a class="header__nav-item" href="/docs">Docs</a>
   </nav>
 </header>
@@ -42,7 +42,6 @@
           color: $highlight-color;
         }
       }
-
     }
   }
 </style>

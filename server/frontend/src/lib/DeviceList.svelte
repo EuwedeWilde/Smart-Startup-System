@@ -58,6 +58,7 @@
       font-size: $font-large;
       font-family: $main-font;
       color: $secondary-color;
+      margin: 0.5rem 0;
     }
     &__list {
       background-color: $secondary-color;

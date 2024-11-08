@@ -50,8 +50,19 @@
         const ws = getWebSocket();
         if (ws && ws.readyState === WebSocket.OPEN) {
           socket.sState = !socket.sState;
-          $selectedDevice = {...$selectedDevice}; 
           
+          // Update the devices store to trigger reactivity
+          $devices = $devices.map(device => 
+            device.dMac === $selectedDevice.dMac 
+              ? {...device, dSockets: device.dSockets.map(s => 
+                  s.sId === socketId ? {...s, sState: socket.sState} : s
+                )}
+              : device
+          );
+          
+          // Update selected device to match
+          $selectedDevice = $devices.find(d => d.dMac === $selectedDevice.dMac);
+
           ws.send(JSON.stringify({
             control: {
               device: $selectedDevice.dMac,
@@ -217,6 +228,7 @@
       font-size: $font-large;
       font-family: $main-font;
       color: $secondary-color;
+      margin: 0.5rem 0;
     }
     &__config-field {
       background-color: $secondary-color;

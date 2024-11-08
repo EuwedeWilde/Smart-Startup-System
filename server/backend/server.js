@@ -256,18 +256,70 @@ function pingFromDevice(message) { // typical message structure: "S3/XXXXXXXXXXX
   console.log('Received ping from device:', deviceMac);
 }
 
-function infoFromDevice(message) { // typical message structure: "S3/XXXXXXXXXXXX" {sender: "XXXXXXXXXXXX", meth: "inf", info: {dId: 001, dName: "Device 1", dIp: "000.000.000.000", dNumSockets: 2, dSockets: [{sId: 1, sState: false}, {sId: 2, sState: false}]}}
+async function infoFromDevice(message) {
   const deviceMac = message.sender;
   const deviceInfo = message.info;
-  updateDeviceInfo(deviceMac, deviceInfo);
-  console.log('Received info from device:', deviceMac);
+  
+  try {
+    const updatedDevice = await updateDeviceInfo(deviceMac, deviceInfo);
+    
+    const socketStates = updatedDevice.dSockets.map(socket => ({
+      sId: socket.sId,
+      sState: socket.sState
+    })).filter(socket => socket.sState === true);
+
+    if (socketStates.length > 0) {
+      controlToDevice(deviceMac, socketStates);
+      console.log('Restored socket states for device:', deviceMac, socketStates);
+    }
+  } catch (err) {
+    console.error('Error handling device info:', err);
+  }
 }
 
 function controlFromDevice(message) {
   const deviceMac = message.sender;
   const deviceControl = message.control;
   console.log('Received control from device:', deviceMac, deviceControl);
-  updateSocketState(deviceMac, deviceControl);
+  
+  updateSocketState(deviceMac, deviceControl)
+    .then(() => {
+      devicesToWebSocket(wss);
+    })
+    .catch(err => {
+      console.error('Error updating socket state:', err);
+    });
+}
+
+async function updateSocketState(deviceMac, deviceControl) {
+  try {
+    const existingDevice = await dbDeviceInfo.findOne({ dMac: deviceMac });
+    if (existingDevice) {
+      let updated = false;
+      
+      for (const control of deviceControl) {
+        // Update all sockets that were included in the control message
+        existingDevice.dSockets = existingDevice.dSockets.map(socket => {
+          if (socket.sId === control.sId) {
+            updated = true;
+            return {
+              ...socket,
+              sState: control.sState,
+              sLastUpdate: new Date()
+            };
+          }
+          return socket;
+        });
+      }
+      
+      if (updated) {
+        await existingDevice.save();
+      }
+    }
+  } catch (err) {
+    console.error(`Error updating socket state for device ${deviceMac}:`, err);
+    throw err;
+  }
 }
 
 async function updateDevicePing(deviceMac) {
@@ -289,18 +341,16 @@ async function updateDeviceInfo(deviceMac, deviceInfo) {
   try {
     console.log('Updating device info:', deviceMac, deviceInfo);
     
-    // First, try to find existing device to preserve socket configurations
     const existingDevice = await dbDeviceInfo.findOne({ dMac: deviceMac });
     
     let initializedSockets;
     if (existingDevice) {
-      // Preserve existing socket configurations while updating states from device
       initializedSockets = Array.from({ length: deviceInfo.dNumSockets }, (_, index) => {
         const existingSocket = existingDevice.dSockets.find(s => s.sId === (index + 1));
         return {
           sId: index + 1,
           sName: existingSocket?.sName || "Undefined",
-          sState: deviceInfo.dSockets?.[index]?.sState || false,
+          sState: existingSocket ? existingSocket.sState : (deviceInfo.dSockets?.[index]?.sState || false),
           sGroup: existingSocket?.sGroup || "",
           sInUse: existingSocket?.sInUse || false,
           sLastInUse: existingSocket?.sLastInUse || null,
@@ -308,7 +358,6 @@ async function updateDeviceInfo(deviceMac, deviceInfo) {
         };
       });
     } else {
-      // Initialize new sockets if device doesn't exist
       initializedSockets = Array.from({ length: deviceInfo.dNumSockets }, (_, index) => ({
         sId: index + 1,
         sName: "Undefined",
@@ -398,34 +447,6 @@ async function updateDeviceConfig(device, config) {
     }
   } catch (err) {
     console.error("Failed to update device info:", err);
-  }
-}
-
-async function updateSocketState(deviceMac, deviceControl) {
-  try {
-    const existingDevice = await dbDeviceInfo.findOne({ dMac: deviceMac });
-    if (existingDevice) {
-      let updated = false;
-      
-      for (const control of deviceControl) {
-        const socket = existingDevice.dSockets.find(s => s.sId === control.sId);
-        if (socket) {
-          if (socket.sState !== control.sState) {
-            socket.sState = control.sState;
-            socket.sLastUpdate = new Date();
-            updated = true;
-          }
-        }
-      }
-      
-      if (updated) {
-        await existingDevice.save();
-        // Broadcast the updated device state to all WebSocket clients
-        devicesToWebSocket(wss);
-      }
-    }
-  } catch (err) {
-    console.error(`Error updating socket state for device ${deviceMac}:`, err);
   }
 }
 
