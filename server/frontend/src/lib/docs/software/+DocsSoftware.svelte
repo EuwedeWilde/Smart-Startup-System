@@ -3,6 +3,7 @@
   import DocsServer from "./DocsServer.svelte";
   import DocsDevice from "./DocsDevice.svelte";
   import DocsFrontend from "./DocsFrontend.svelte";
+  import DocsDatabase from "./DocsDatabase.svelte";
 </script>
 
 <section>
@@ -11,4 +12,5 @@
   <DocsServer />
   <DocsDevice />
   <DocsFrontend />
+  <DocsDatabase />
 </section>

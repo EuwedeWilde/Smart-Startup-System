@@ -5,11 +5,9 @@ To read how to use it exicute the following command in the smart-startup-system 
 ```
 cd ./server/backend
 npm run start
-
 ```
 
 Then go to the following url:
 ```
 http://localhost:1407/docs
-
 ```
