@@ -1,0 +1,59 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "Arduino",
+      "compilerPath": "C:\\Users\\${env:USERNAME}\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\xtensa-esp-elf-gdb\\12.1_20231023\\bin\\xtensa-esp32-elf-gdb.exe",
+      "compilerArgs": [
+        "-std=gnu++11",
+        "-Wpointer-arith",
+        "-fexceptions",
+        "-fstack-protector",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-fstrict-volatile-bitfields",
+        "-mlongcalls",
+        "-nostdlib",
+        "-w",
+        "-Wno-error=maybe-uninitialized",
+        "-Wno-error=unused-function",
+        "-Wno-error=unused-but-set-variable",
+        "-Wno-error=unused-variable",
+        "-Wno-error=deprecated-declarations",
+        "-Wno-unused-parameter",
+        "-Wno-unused-but-set-parameter",
+        "-Wno-missing-field-initializers",
+        "-Wno-sign-compare"
+      ],
+      "intelliSenseMode": "gcc-x64",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "C:\\Users\\${env:USERNAME}\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.0.4\\**",
+        "C:\\Users\\${env:USERNAME}\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\**",
+        "C:\\Program Files (x86)\\Arduino\\libraries\\**",
+        "C:\\Users\\${env:USERNAME}\\OneDrive - TU Eindhoven\\Documenten\\Arduino\\libraries\\**",
+        "C:\\Users\\${env:USERNAME}\\AppData\\Local\\Arduino15\\libraries\\**" // Add this line
+      ],
+      "forcedInclude": [
+        "${env:USERPROFILE}\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.0.4\\cores\\esp32\\Arduino.h"
+      ],
+      "cStandard": "c11",
+      "cppStandard": "c++11",
+      "defines": [
+        "ESP_PLATFORM",
+        "MBEDTLS_CONFIG_FILE=\"mbedtls/esp_config.h\"",
+        "HAVE_CONFIG_H",
+        "GCC_NOT_5_2_0=0",
+        "WITH_POSIX",
+        "F_CPU=240000000L",
+        "ARDUINO=10819",
+        "ARDUINO_ESP32_DEV",
+        "ARDUINO_ARCH_ESP32",
+        "ARDUINO_BOARD=\"ESP32_DEV\"",
+        "ARDUINO_VARIANT=\"esp32\"",
+        "ESP32",
+        "CORE_DEBUG_LEVEL=0"
+      ]
+    }
+  ]
+}
