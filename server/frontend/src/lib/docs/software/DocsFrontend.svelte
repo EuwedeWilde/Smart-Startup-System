@@ -13,7 +13,9 @@ Smart-Startup-System
        └──... // all frontend files
 
 // --- Commands ---
-npm run dev // to test the server
-npm run build // to start the server`}
+npm run dev // to test the frontend
+npm run build // to build the frontend
+serve -s dist // to serve the build frontend
+`}
   </code>
 </section>

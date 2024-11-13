@@ -13,8 +13,8 @@ Smart-Startup-System
        └──... // all server files
 
 // --- Commands ---
-npm run dev // to test the frontend
-npm run start // to build the frontend`}
+npm run dev // to test the server
+npm run start // to run the server`}
   </code>
   <p class="docs__content-footnote">Structure and commands</p>
   <p class="docs__content">

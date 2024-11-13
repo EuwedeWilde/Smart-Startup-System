@@ -9,7 +9,6 @@
       <ul class="docs__content-list">
         <li><a href="#schematic" class="docs__link">Schematic</a></li>
         <li><a href="#pcb" class="docs__link">PCB</a></li>
-        <li><a href="#soldering" class="docs__link">Soldering</a></li>
       </ul>
     </ul>
     <li><a href="#software" class="docs__link">Software</a></li>

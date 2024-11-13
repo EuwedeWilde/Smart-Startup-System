@@ -6,7 +6,7 @@ const WebSocket = require('ws');
 const http = require('http');
 const { info } = require("console");
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 1407;
 const MQTT_BROKER = "mqtt://inmat.nl";
 const MONGODB_URI = 'mongodb://127.0.0.1:27017/local';
 const SERVER_NAME = "server";
