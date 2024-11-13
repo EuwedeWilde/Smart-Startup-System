@@ -1,7 +1,7 @@
 <script>
-  import Header from '../lib/Header.svelte';
-  import DeviceList from '../lib/DeviceList.svelte';
-  import DeviceConfig from '../lib/DeviceConfig.svelte';
+  import Header from '../lib/layout/Header.svelte';
+  import DeviceList from '../lib/config/DeviceList.svelte';
+  import DeviceConfig from '../lib/config/DeviceConfig.svelte';
   import { connectWebSocket } from '../scripts/WebSocket.svelte';
   import { onMount } from 'svelte';
 

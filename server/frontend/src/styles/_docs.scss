@@ -1,0 +1,123 @@
+.docs {
+  font-family: $main-font;
+  width: 80%;
+  margin: 0 auto;
+  color: $secondary-color;
+  &__title {
+    font-size: $font-large;
+    margin: 0.5rem 0;
+  }
+  &__subtitle {
+    font-size: $font-medium-large;
+    margin: 0.5rem 0;
+  }
+  &__subsubtitle {
+    font-size: $font-medium;
+    margin: 0.5rem 0;
+  }
+  &__link {
+    color: $secondary-color;
+    text-decoration: underline;
+    &:hover {
+      color: $highlight-color;
+    }
+  }
+  &__content {
+    margin: 0.5rem 0;
+    text-align: justify;
+    text-justify: inter-word;
+    font-size: $font-medium;
+    &-list {
+      margin-left: 2rem;
+    }
+    &-code {
+      background-color: $secondary-color;
+      padding: 0.5rem;
+      margin: 0.5rem 0;
+      color: $primary-color;
+      font-size: $font-small-medium;
+      font-family: $mono-font;
+      white-space: pre;
+      display: block;
+    }
+    &-footnote {
+      font-size: $font-small-medium;
+      font-style: italic;
+      margin: 0.5rem auto;
+      text-align: left;
+    }
+  }
+  &__image {
+    width: 40%;
+    margin: 0.5rem auto;
+    display: block;
+    &-caption {
+      font-size: $font-small-medium;
+      font-style: italic;
+      margin: 0.5rem auto;
+      text-align: center;
+    }
+  }
+  &__warning {
+    border: 3px solid $highlight-color;
+    padding: 0.5rem;
+    margin: 0.5rem 0;
+    &-title {
+      font-size: $font-medium;
+      font-weight: bold;
+    }
+    &-content {
+      font-size: $font-medium;
+    }
+    &-image {
+      width: 40%;
+      margin: 0.5rem auto;
+      display: block;
+      &-caption {
+        font-size: $font-small-medium;
+        font-style: italic;
+        margin: 0.5rem auto;
+        text-align: center;
+      }
+    }
+    
+  }
+  &__table {
+    width: 100%;
+    border:1px solid;
+    border-collapse: collapse;
+    &-head {
+      font-weight: bold;
+    }
+    &-body {
+      font-style: italic;
+    }
+    &-row {
+      border:1px solid;
+      border-collapse: collapse;
+    }
+    &-item {
+      &--component {
+        width: 50%;
+        text-align: left;
+        border:1px solid;
+        border-collapse: collapse;
+        padding: 0 0.5rem;
+      }
+      &--quantity {
+        width:10%;
+        text-align: left;
+        border:1px solid;
+        border-collapse: collapse;
+        padding: 0 0.5rem;
+      }
+      &--notes {
+        width: 40%;
+        text-align: left;
+        border:1px solid;
+        border-collapse: collapse;
+        padding: 0 0.5rem;
+      }
+    }
+  }
+}
